@@ -1,0 +1,86 @@
+name: Build & deploy Sonne Berlin
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * 1'   # every Monday: refresh cafés & terraces
+    - cron: '41 2 3 2 *'   # every 3 February: rebuild buildings from ALKIS
+  workflow_dispatch:
+    inputs:
+      rebuild_buildings:
+        description: 'Re-download all buildings from Geoportal Berlin (takes ~10–20 min)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write     # store the building tiles as a release asset
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Buildings (official ALKIS data, cached in a release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REBUILD: ${{ inputs.rebuild_buildings || github.event.schedule == '41 2 3 2 *' }}
+        run: |
+          mkdir -p site/data
+          if [ "$REBUILD" != "true" ] && gh release download buildings-data -p buildings.tar.gz -D /tmp 2>/dev/null; then
+            echo "Using cached building tiles"
+            tar xzf /tmp/buildings.tar.gz -C site/data
+          else
+            python3 scripts/build_buildings.py site/data
+            tar czf /tmp/buildings.tar.gz -C site/data b buildings_meta.json
+            gh release view buildings-data >/dev/null 2>&1 || \
+              gh release create buildings-data --title "Building data (ALKIS Berlin)" \
+                --notes "Prebuilt building tiles used by the site. Rebuilt yearly by the workflow." --latest=false
+            gh release upload buildings-data /tmp/buildings.tar.gz --clobber
+          fi
+          cat site/data/buildings_meta.json
+
+      - name: Cafés & terraces (OpenStreetMap)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if python3 scripts/build_terraces.py site/data; then
+            gh release view buildings-data >/dev/null 2>&1 && gh release upload buildings-data site/data/terraces.json --clobber || true
+          else
+            echo "::warning::Overpass failed — reusing the previous terraces list"
+            gh release download buildings-data -p terraces.json -D site/data
+          fi
+
+      - name: Assemble site
+        run: |
+          python3 - <<'EOF'
+          import json, time
+          m = json.load(open('site/data/buildings_meta.json'))
+          m['terraces_built'] = time.strftime('%Y-%m-%d')
+          json.dump(m, open('site/data/manifest.json', 'w'))
+          EOF
+          cp index.html site/
+          touch site/.nojekyll
+          du -sh site; find site -type f | wc -l
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

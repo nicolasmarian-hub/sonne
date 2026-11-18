@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sonne Berlin — find a sunny terrace</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+<style>
+  :root{
+    --sun:#FFB800; --sun-dark:#D98200; --shade:#7A88A6; --shade-dark:#4B5672;
+    --ink:#1f2330; --muted:#6b7080; --card:rgba(255,255,255,.96); --line:#e7e3da;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;color:var(--ink)}
+  #map{position:absolute;inset:0;background:#f2efe9}
+  .card{background:var(--card);border-radius:14px;box-shadow:0 4px 24px rgba(30,30,50,.14),0 1px 3px rgba(30,30,50,.08)}
+  #bar{position:absolute;z-index:1000;top:12px;left:50%;transform:translateX(-50%);
+       width:min(760px,calc(100% - 24px));padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .brand{font-weight:700;font-size:17px;white-space:nowrap;display:flex;align-items:center;gap:6px}
+  .brand .dot{width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#ffe27a,var(--sun) 60%,var(--sun-dark));box-shadow:0 0 10px rgba(255,184,0,.6)}
+  #search{flex:1;min-width:140px;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:14px;background:#fff}
+  #time{flex:1;min-width:160px;accent-color:var(--sun-dark)}
+  #timeLabel{font-variant-numeric:tabular-nums;font-weight:700;font-size:18px;min-width:52px;text-align:center}
+  input[type=date]{border:1px solid var(--line);border-radius:9px;padding:6px 8px;font-size:14px;background:#fff;font-family:inherit}
+  button{border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 11px;font-size:14px;cursor:pointer;font-family:inherit;color:var(--ink)}
+  button:hover{background:#faf7f0}
+  button.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  #suninfo{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  #sunArrow{display:inline-block;transition:transform .2s}
+  #panel{position:absolute;z-index:1000;right:12px;top:150px;bottom:12px;width:290px;display:flex;flex-direction:column;overflow:hidden}
+  #panel header{padding:12px 14px 8px;border-bottom:1px solid var(--line)}
+  #panel h2{margin:0;font-size:15px}
+  #count{font-size:13px;color:var(--muted);margin-top:2px}
+  #panel label{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;margin-top:8px;cursor:pointer}
+  #list{overflow:auto;flex:1;padding:4px 0}
+  .item{display:flex;gap:10px;align-items:center;padding:7px 14px;cursor:pointer;font-size:14px}
+  .item:hover{background:#faf6ec}
+  .item .d{width:12px;height:12px;border-radius:50%;flex:none}
+  .item .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .item .s{font-size:12px;color:var(--muted);white-space:nowrap}
+  .sun{background:var(--sun);border:2px solid var(--sun-dark)}
+  .shade{background:var(--shade);border:2px solid var(--shade-dark)}
+  #status{position:absolute;z-index:1000;left:50%;bottom:22px;transform:translateX(-50%);padding:8px 14px;font-size:14px;display:none;white-space:nowrap}
+  #togglePanel{display:none}
+  .leaflet-popup-content{margin:12px 14px;min-width:230px}
+  .pop h3{margin:0 0 2px;font-size:15px}
+  .pop .t{font-size:12px;color:var(--muted);margin-bottom:8px}
+  .pop .state{font-weight:600;font-size:14px;margin-bottom:8px}
+  .pop .ticks{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:2px}
+  .pop .note{font-size:11px;color:var(--muted);margin-top:8px}
+  .legend{display:flex;gap:12px;font-size:12px;color:var(--muted);align-items:center}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend i{width:10px;height:10px;border-radius:50%;display:inline-block}
+  @media (max-width:760px){
+    #bar{top:8px;padding:8px 10px}
+    .brand span.full{display:none}
+    #panel{top:auto;left:8px;right:8px;width:auto;height:38%;bottom:8px}
+    #panel.collapsed{height:auto}
+    #panel.collapsed #list,#panel.collapsed label{display:none}
+    #togglePanel{display:inline-block;float:right;padding:2px 8px;font-size:12px}
+    #status{bottom:auto;top:150px}
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="bar" class="card">
+  <div class="row">
+    <div class="brand"><div class="dot"></div>Sonne Berlin</div>
+    <input id="search" type="search" placeholder="Search a street, square, Kiez…" autocomplete="off">
+    <button id="locate" title="Go to my location">◎</button>
+  </div>
+  <div class="row">
+    <input type="date" id="date">
+    <input type="range" id="time" min="0" max="1435" step="5">
+    <span id="timeLabel">12:00</span>
+    <button id="play" title="Play the day">▶</button>
+    <button id="now" class="primary">Now</button>
+  </div>
+  <div id="suninfo"></div>
+</div>
+
+<aside id="panel" class="card">
+  <header>
+    <button id="togglePanel">▾</button>
+    <h2>Terraces in view</h2>
+    <div id="count">Zoom in to see terraces</div>
+    <label><input type="checkbox" id="showAll"> Also show cafés &amp; bars with no terrace info in OSM</label>
+  </header>
+  <div id="list"></div>
+</aside>
+
+<div id="status" class="card"></div>
+
+<script>
+/* ============================================================
+   Sonne Berlin — sun & shade on café terraces
+   Data: OpenStreetMap via Overpass API (buildings + amenities)
+   Shadows: computed in the browser from building heights and
+   the sun position (no weather — assumes a clear sky).
+   ============================================================ */
+
+// ---------- Sun position (after SunCalc, V. Agafonkin, BSD) ----------
+const RAD = Math.PI/180, DAYMS = 864e5, J1970 = 2440588, J2000 = 2451545, OBL = RAD*23.4397;
+function toDays(d){ return d.valueOf()/DAYMS - 0.5 + J1970 - J2000; }
+function sunPosition(date, lat, lng){
+  const lw = RAD*-lng, phi = RAD*lat, d = toDays(date);
+  const M = RAD*(357.5291 + 0.98560028*d);
+  const C = RAD*(1.9148*Math.sin(M) + 0.02*Math.sin(2*M) + 0.0003*Math.sin(3*M));
+  const L = M + C + RAD*102.9372 + Math.PI;
+  const dec = Math.asin(Math.sin(OBL)*Math.sin(L));
+  const ra = Math.atan2(Math.sin(L)*Math.cos(OBL), Math.cos(L));
+  const H = RAD*(280.16 + 360.9856235*d) - lw - ra;
+  return {
+    az: Math.atan2(Math.sin(H), Math.cos(H)*Math.sin(phi) - Math.tan(dec)*Math.cos(phi)), // from south, west +
+    alt: Math.asin(Math.sin(phi)*Math.sin(dec) + Math.cos(phi)*Math.cos(dec)*Math.cos(H))
+  };
+}
+
+// ---------- Berlin time helpers (works wherever the page is opened) ----------
+const fmtBerlin = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+function berlinParts(date){
+  const p = {}; for (const x of fmtBerlin.formatToParts(date)) p[x.type] = +x.value || x.value;
+  return {y:+p.year, m:+p.month, d:+p.day, h:+p.hour % 24, mi:+p.minute};
+}
+function berlinDate(y,m,d,minutes){
+  const target = Date.UTC(y,m-1,d,0,minutes);
+  let guess = target - 3600e3;
+  for (let i=0;i<3;i++){
+    const p = berlinParts(new Date(guess));
+    guess -= Date.UTC(p.y,p.m-1,p.d,p.h,p.mi) - target;
+  }
+  return new Date(guess);
+}
+const hhmm = m => String(Math.floor(m/60)).padStart(2,'0') + ':' + String(m%60).padStart(2,'0');
+
+// ---------- Geometry setup ----------
+const LAT0 = 52.52, LON0 = 13.405;
+const MLAT = 111132, MLON = 111320*Math.cos(LAT0*RAD);
+const toXY = (lat,lon) => [(lon-LON0)*MLON, (lat-LAT0)*MLAT];
+const CELL = 40;            // spatial grid cell (m)
+const EYE = 1.1;            // seated eye/table height (m)
+const CAP = 600;            // max shadow length (m)
+const MINZOOM = 16;         // load & show data from this zoom
+
+const buildings = [];       // {xy:Float64Array, merc:Float64Array, h, bb:[x0,y0,x1,y1], part}
+const seenB = new Set();
+const grid = new Map();
+let HMAX = 30;
+const terraces = new Map(); // id -> terrace
+const loadedTiles = new Set();
+const $ = id => document.getElementById(id);
+let sel = {y:0,m:0,d:0,min:0};
+let currentSun = {alt:0, az:0};
+let sunCache = {key:'', arr:[]};
+let loading = false;
+
+function gridAdd(i, bb){
+  const x0=Math.floor(bb[0]/CELL), y0=Math.floor(bb[1]/CELL), x1=Math.floor(bb[2]/CELL), y1=Math.floor(bb[3]/CELL);
+  for (let x=x0;x<=x1;x++) for (let y=y0;y<=y1;y++){
+    const k = x+','+y; let a = grid.get(k); if(!a) grid.set(k, a=[]); a.push(i);
+  }
+}
+function pointInRing(x,y,r){
+  let inside=false;
+  for (let i=0,j=r.length-2;i<r.length;j=i,i+=2){
+    const xi=r[i], yi=r[i+1], xj=r[j], yj=r[j+1];
+    if (((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+function segsCross(ax,ay,bx,by,cx,cy,dx,dy){
+  const d1=(bx-ax)*(cy-ay)-(by-ay)*(cx-ax), d2=(bx-ax)*(dy-ay)-(by-ay)*(dx-ax);
+  const d3=(dx-cx)*(ay-cy)-(dy-cy)*(ax-cx), d4=(dx-cx)*(by-cy)-(dy-cy)*(bx-cx);
+  return ((d1>0)!==(d2>0)) && ((d3>0)!==(d4>0));
+}
+function segHitsRing(ax,ay,bx,by,r){
+  if (pointInRing(ax,ay,r)) return true;
+  for (let i=0,j=r.length-2;i<r.length;j=i,i+=2)
+    if (segsCross(ax,ay,bx,by,r[j],r[j+1],r[i],r[i+1])) return true;
+  return false;
+}
+
+// ---------- Heights ----------
+const LOW = new Set(['garage','garages','shed','carport','kiosk','hut','container','toilets','roof','service','transformer_tower','cabin','greenhouse','bunker','bicycle_parking']);
+const HOUSE = new Set(['house','detached','semidetached_house','bungalow','terrace','farm','allotment_house']);
+function num(v){ if(v==null) return NaN; const n=parseFloat(String(v).replace(',','.')); return isFinite(n)?n:NaN; }
+function heightOf(t){
+  let h = num(t.height) || num(t['building:height']);
+  if (h>0) return h;
+  const lv = num(t['building:levels']), rf = num(t['roof:levels']) || 0;
+  if (lv>=0) return Math.max(2.5, lv*3.2 + rf*1.8 + 1);
+  const b = t.building || t['building:part'];
+  if (LOW.has(b)) return 3;
+  if (HOUSE.has(b)) return 8;
+  if (b==='church'||b==='cathedral') return 25;
+  return 16; // typical Berlin 5-storey block
+}
+
+function addBuildingRing(geom, h, part){
+  if (!geom || geom.length < 4) return;
+  const n = geom.length - (geom[0].lat===geom[geom.length-1].lat && geom[0].lon===geom[geom.length-1].lon ? 1 : 0);
+  if (n < 3) return;
+  const xy = new Float64Array(n*2), merc = new Float64Array(n*2);
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  for (let i=0;i<n;i++){
+    const g = geom[i], [x,y] = toXY(g.lat,g.lon);
+    xy[2*i]=x; xy[2*i+1]=y;
+    const p = L.CRS.EPSG3857.latLngToPoint(L.latLng(g.lat,g.lon), 0);
+    merc[2*i]=p.x; merc[2*i+1]=p.y;
+    if(x<x0)x0=x; if(y<y0)y0=y; if(x>x1)x1=x; if(y>y1)y1=y;
+  }
+  const i = buildings.push({xy, merc, h, bb:[x0,y0,x1,y1], part}) - 1;
+  gridAdd(i, [x0,y0,x1,y1]);
+  if (h < 200) HMAX = Math.max(HMAX, h);
+}
+function joinRings(ways){
+  const segs = ways.filter(w=>w && w.length>1).map(w=>w.slice());
+  const rings = [];
+  const key = p => p.lat.toFixed(7)+','+p.lon.toFixed(7);
+  while (segs.length){
+    let ring = segs.shift();
+    let guard = 0;
+    while (key(ring[0]) !== key(ring[ring.length-1]) && guard++ < 500){
+      const end = key(ring[ring.length-1]);
+      const k = segs.findIndex(s => key(s[0])===end || key(s[s.length-1])===end);
+      if (k<0) break;
+      let s = segs.splice(k,1)[0];
+      if (key(s[0])!==end) s = s.reverse();
+      ring = ring.concat(s.slice(1));
+    }
+    rings.push(ring);
+  }
+  return rings;
+}
+
+// ---------- Terraces ----------
+const TYPES = {cafe:'Café', bar:'Bar', pub:'Kneipe / Pub', restaurant:'Restaurant', biergarten:'Biergarten', ice_cream:'Ice cream'};
+function addTerrace(e){
+  const t = e.tags || {};
+  const id = e.type[0]+e.id;
+  if (terraces.has(id)) return;
+  let lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
+  if (lat==null && e.geometry){ lat = e.geometry.reduce((a,g)=>a+g.lat,0)/e.geometry.length; lon = e.geometry.reduce((a,g)=>a+g.lon,0)/e.geometry.length; }
+  if (lat==null) return;
+  const os = (t.outdoor_seating||'').toLowerCase();
+  if (os==='no') return;
+  const confirmed = os==='yes' || os==='garden' || os==='terrace' || os==='sidewalk' || os==='pedestrian_zone' || t.amenity==='biergarten' || t.beer_garden==='yes';
+  const [x,y] = toXY(lat,lon);
+  terraces.set(id, {id, lat, lon, x, y, px:x, py:y, tags:t, name:t.name || TYPES[t.amenity] || 'Unnamed', kind:TYPES[t.amenity]||t.amenity, confirmed, marker:null, sunny:null});
+}
+function nearBuildings(x,y,r=1){
+  const cx=Math.floor(x/CELL), cy=Math.floor(y/CELL), out=new Set();
+  for (let i=-r;i<=r;i++) for (let j=-r;j<=r;j++){ const a=grid.get((cx+i)+','+(cy+j)); if(a) for(const b of a) out.add(b); }
+  return out;
+}
+function insideAnyBuilding(x,y){
+  for (const i of nearBuildings(x,y)){ const b=buildings[i]; if(!b.part && x>=b.bb[0]&&x<=b.bb[2]&&y>=b.bb[1]&&y<=b.bb[3] && pointInRing(x,y,b.xy)) return i; }
+  return -1;
+}
+// Many OSM café points sit inside the building: move them onto the pavement in front.
+function placeTerrace(t){
+  t.px=t.x; t.py=t.y;
+  const bi = insideAnyBuilding(t.x,t.y);
+  if (bi<0) return;
+  const r = buildings[bi].xy, cands=[];
+  for (let i=0,j=r.length-2;i<r.length;j=i,i+=2){
+    const ax=r[j],ay=r[j+1],bx=r[i],by=r[i+1], dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy;
+    if (l2<0.01) continue;
+    let u=((t.x-ax)*dx+(t.y-ay)*dy)/l2; u=Math.max(0.05,Math.min(0.95,u));
+    const qx=ax+u*dx, qy=ay+u*dy, dist=Math.hypot(qx-t.x,qy-t.y);
+    const len=Math.sqrt(l2); let nx=dy/len, ny=-dx/len;
+    if (pointInRing(qx+nx*0.5, qy+ny*0.5, r)){ nx=-nx; ny=-ny; }
+    cands.push({dist, x:qx+nx*2.5, y:qy+ny*2.5});
+  }
+  cands.sort((a,b)=>a.dist-b.dist);
+  const ok = cands.find(c=>insideAnyBuilding(c.x,c.y)<0) || cands[0];
+  if (ok){ t.px=ok.x; t.py=ok.y; }
+}
+
+// Is point (x,y) in a building shadow for this sun?
+function inShadow(x,y,sun){
+  if (sun.alt <= 0.004) return true;
+  const tanA = Math.tan(sun.alt), ex = -Math.sin(sun.az), ey = -Math.cos(sun.az); // direction towards the sun
+  const Lmax = Math.min((HMAX-EYE)/tanA, CAP);
+  const seen = new Set();
+  for (let s=0; s<=Lmax+CELL; s+=CELL/2){
+    const cx=Math.floor((x+ex*s)/CELL), cy=Math.floor((y+ey*s)/CELL);
+    for (let i=-1;i<=1;i++) for (let j=-1;j<=1;j++){
+      const a = grid.get((cx+i)+','+(cy+j)); if(!a) continue;
+      for (const bi of a){
+        if (seen.has(bi)) continue; seen.add(bi);
+        const b = buildings[bi], Lb = Math.min((b.h-EYE)/tanA, CAP);
+        if (Lb<=0) continue;
+        const bx=x+ex*Lb, by=y+ey*Lb;
+        if (Math.max(x,bx)<b.bb[0]||Math.min(x,bx)>b.bb[2]||Math.max(y,by)<b.bb[1]||Math.min(y,by)>b.bb[3]) continue;
+        if (segHitsRing(x,y,bx,by,b.xy)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ---------- Map ----------
+function parseHash(){
+  const m = location.hash.match(/^#(\d+(?:\.\d+)?)\/(-?\d+\.\d+)\/(-?\d+\.\d+)/);
+  return m ? {z:+m[1], lat:+m[2], lng:+m[3]} : null;
+}
+const h0 = parseHash() || {z:17, lat:52.5363, lng:13.4170};
+const map = L.map('map', {zoomControl:false, maxZoom:20, minZoom:11}).setView([h0.lat,h0.lng], h0.z);
+L.control.zoom({position:'bottomleft'}).addTo(map);
+// Basemap: OpenFreeMap (free, no API key) via MapLibre; Esri light grey raster as a fallback.
+function esriFallback(){
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom:20, maxNativeZoom:16,
+    attribution:'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors'
+  }).addTo(map);
+}
+try{
+  const gl = document.createElement('canvas').getContext('webgl2') || document.createElement('canvas').getContext('webgl');
+  if (!window.maplibregl || !L.maplibreGL || !gl) throw new Error('no maplibre/webgl');
+  const base = L.maplibreGL({
+    style:'https://tiles.openfreemap.org/styles/positron',
+    attribution:'<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  base.getMaplibreMap().on('error', e=>{
+    if (!window._baseFailed && /style|Failed to fetch|NetworkError/i.test(String(e?.error?.message||''))){ window._baseFailed=true; map.removeLayer(base); esriFallback(); }
+  });
+}catch(e){ esriFallback(); }
+map.createPane('shadows').style.zIndex = 350;
+const terraceRenderer = L.canvas({padding:0.5});
+const terraceLayer = L.layerGroup().addTo(map);
+
+// Shadow canvas layer
+const PAD = 0.35;
+const ShadowLayer = L.Layer.extend({
+  onAdd(m){
+    this._c = L.DomUtil.create('canvas','');
+    this._c.style.position='absolute'; this._c.style.pointerEvents='none';
+    m.getPane('shadows').appendChild(this._c);
+    m.on('moveend zoomend resize viewreset', this.redraw, this);
+    m.on('zoomstart', ()=>{ this._c.style.display='none'; });
+    this.redraw();
+  },
+  redraw(){
+    const c = this._c, m = map, size = m.getSize(), dpr = window.devicePixelRatio||1;
+    c.style.display='';
+    const padX = Math.round(size.x*PAD), padY = Math.round(size.y*PAD);
+    const W = size.x+2*padX, H = size.y+2*padY;
+    if (c.width !== W*dpr || c.height !== H*dpr){ c.width=W*dpr; c.height=H*dpr; c.style.width=W+'px'; c.style.height=H+'px'; }
+    L.DomUtil.setPosition(c, m.containerPointToLayerPoint([-padX,-padY]));
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,W,H);
+    if (m.getZoom() < MINZOOM - 0.01) return;
+
+    const z = m.getZoom(), s = m.getZoomScale(z,0);
+    const po = m.getPixelOrigin(), pp = m.getPane('mapPane')._leaflet_pos || L.point(0,0);
+    const ox = po.x - pp.x - padX, oy = po.y - pp.y - padY;
+    const center = m.getCenter();
+    const pxPerM = 256*s/(40075016.686*Math.cos(center.lat*RAD));
+    // visible region in local metres (+ shadow reach)
+    const tl = m.containerPointToLatLng([-padX,-padY]), br = m.containerPointToLatLng([W-padX,H-padY]);
+    const [vx0,vy1] = toXY(tl.lat,tl.lng), [vx1,vy0] = toXY(br.lat,br.lng);
+    const sun = currentSun;
+    const day = sun.alt > 0.004;
+    const tanA = Math.tan(Math.max(sun.alt, 0.001));
+    const sx = Math.sin(sun.az), sy = Math.cos(sun.az); // shadow direction (east, north)
+    const reach = day ? Math.min(HMAX/tanA, CAP) : 0;
+
+    const vis = [];
+    for (const b of buildings){
+      if (b.bb[2] < vx0-reach || b.bb[0] > vx1+reach || b.bb[3] < vy0-reach || b.bb[1] > vy1+reach) continue;
+      vis.push(b);
+    }
+    const P = (b,i) => [b.merc[2*i]*s - ox, b.merc[2*i+1]*s - oy];
+
+    if (day){
+      ctx.beginPath();
+      for (const b of vis){
+        const Lb = Math.min((b.h-EYE)/tanA, CAP); if (Lb<=0) continue;
+        const dx = sx*Lb*pxPerM, dy = -sy*Lb*pxPerM, n = b.xy.length/2;
+        const pts = new Array(n); let area = 0;
+        for (let i=0;i<n;i++) pts[i]=P(b,i);
+        for (let i=0,j=n-1;i<n;j=i++) area += pts[j][0]*pts[i][1]-pts[i][0]*pts[j][1];
+        const ord = area>=0 ? [...Array(n).keys()] : [...Array(n).keys()].reverse();
+        // footprint + translated footprint (same orientation)
+        for (const off of [[0,0],[dx,dy]]){
+          ord.forEach((k,idx)=>{ const p=pts[k]; idx?ctx.lineTo(p[0]+off[0],p[1]+off[1]):ctx.moveTo(p[0]+off[0],p[1]+off[1]); });
+          ctx.closePath();
+        }
+        // swept edges, all with positive orientation so the non-zero fill is a union
+        for (let i=0,j=n-1;i<n;j=i++){
+          const a=pts[j], q=pts[i];
+          const cr = (q[0]-a[0])*dy - (q[1]-a[1])*dx;
+          if (Math.abs(cr) < 1e-6) continue;
+          if (cr>0){ ctx.moveTo(a[0],a[1]); ctx.lineTo(q[0],q[1]); ctx.lineTo(q[0]+dx,q[1]+dy); ctx.lineTo(a[0]+dx,a[1]+dy); }
+          else     { ctx.moveTo(a[0],a[1]); ctx.lineTo(a[0]+dx,a[1]+dy); ctx.lineTo(q[0]+dx,q[1]+dy); ctx.lineTo(q[0],q[1]); }
+          ctx.closePath();
+        }
+      }
+      ctx.fillStyle = 'rgba(38,48,92,0.30)';
+      ctx.fill('nonzero');
+    } else {
+      ctx.fillStyle = 'rgba(25,30,70,0.32)';
+      ctx.fillRect(0,0,W,H);
+    }
+    // buildings on top
+    ctx.beginPath();
+    for (const b of vis){
+      if (b.part) continue;
+      const n=b.xy.length/2;
+      for (let i=0;i<n;i++){ const p=P(b,i); i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]); }
+      ctx.closePath();
+    }
+    ctx.fillStyle = day ? '#e6e1d7' : '#cfcbd6';
+    ctx.strokeStyle = day ? '#cdc5b6' : '#b4afc0';
+    ctx.lineWidth = 0.8;
+    ctx.fill('evenodd'); ctx.stroke();
+  }
+});
+const shadowLayer = new ShadowLayer().addTo(map);
+
+// ---------- Overpass loading: small tiles, 2 in parallel, nearest first, cached ----------
+const ENDPOINTS = ['https://overpass-api.de/api/interpreter','https://overpass.private.coffee/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+const TZ = 16;               // ~370 m tiles in Berlin
+const WORKERS = 2;
+// Prebuilt data (official ALKIS buildings + OSM terraces) when served from the website
+const DATA = {static:false, bbox:null, v:''};
+const workers = () => DATA.static ? 6 : WORKERS;
+const inStatic = (x,y) => DATA.static && (()=>{ const lo=tile2lon(x+0.5), la=tile2lat(y+0.5), b=DATA.bbox;
+  return lo>=b[0] && lo<=b[2] && la>=b[1] && la<=b[3]; })();
+async function initStatic(){
+  if (!/^https?:/.test(location.protocol)) return;
+  try{
+    const r = await fetch('data/manifest.json', {cache:'no-cache'}); if (!r.ok) return;
+    const m = await r.json();
+    const tr = await (await fetch('data/terraces.json?v='+encodeURIComponent(m.terraces_built||m.built))).json();
+    for (const row of tr){
+      const [id,lat,lon,amenity,name,os,street,hnr,web,bg] = row;
+      const tags = {amenity}; if(name) tags.name=name; if(os) tags.outdoor_seating=os; if(street) tags['addr:street']=street;
+      if(hnr) tags['addr:housenumber']=hnr; if(web) tags.website=web; if(bg) tags.beer_garden=bg;
+      addTerrace({type:{n:'node',w:'way',r:'relation'}[id[0]], id:id.slice(1), lat, lon, tags});
+    }
+    DATA.static = true; DATA.bbox = m.bbox; DATA.v = m.built;
+    map.attributionControl.addAttribution('Buildings: <a href="https://gdi.berlin.de" target="_blank">Geoportal Berlin / ALKIS</a> (dl-de/zero-2.0) · data '+m.built);
+  }catch(e){ console.warn('No prebuilt data, using live OpenStreetMap', e); }
+}
+function decodeTile(arr){
+  for (const b of arr){
+    const h = b[0]/10; let lon = b[1], lat = b[2]; const geom = [{lat:lat/1e6, lon:lon/1e6}];
+    for (let i=3;i<b.length;i+=2){ lon += b[i]; lat += b[i+1]; geom.push({lat:lat/1e6, lon:lon/1e6}); }
+    addBuildingRing(geom, h, false);
+  }
+}
+const CACHE_DAYS = 30;
+function lon2tile(lon){ return Math.floor((lon+180)/360*2**TZ); }
+function lat2tile(lat){ const r=lat*RAD; return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*2**TZ); }
+function tile2lon(x){ return x/2**TZ*360-180; }
+function tile2lat(y){ const n=Math.PI-2*Math.PI*y/2**TZ; return 180/Math.PI*Math.atan(Math.sinh(n)); }
+
+// IndexedDB cache (silently skipped if the browser refuses it)
+const dbP = new Promise(res=>{
+  try{
+    const r = indexedDB.open('sonne-berlin', 1);
+    r.onupgradeneeded = ()=>r.result.createObjectStore('tiles');
+    r.onsuccess = ()=>res(r.result); r.onerror = ()=>res(null);
+  }catch{ res(null); }
+});
+async function cacheGet(k){
+  const db = await dbP; if(!db) return null;
+  return new Promise(res=>{ try{
+    const q = db.transaction('tiles').objectStore('tiles').get(k);
+    q.onsuccess = ()=>{ const v=q.result; res(v && Date.now()-v.t < CACHE_DAYS*864e5 ? v.els : null); };
+    q.onerror = ()=>res(null);
+  }catch{ res(null); } });
+}
+async function cachePut(k, els){
+  const db = await dbP; if(!db) return;
+  try{ db.transaction('tiles','readwrite').objectStore('tiles').put({t:Date.now(), els}, k); }catch{}
+}
+
+async function overpass(q, start){
+  let lastErr;
+  for (let i=0;i<ENDPOINTS.length;i++){
+    const url = ENDPOINTS[(start+i)%ENDPOINTS.length];
+    const ctl = new AbortController(), timer = setTimeout(()=>ctl.abort(), 30000);
+    try{
+      const r = await fetch(url, {method:'POST', body:'data='+encodeURIComponent(q), headers:{'Content-Type':'application/x-www-form-urlencoded'}, signal:ctl.signal});
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      return await r.json();
+    }catch(e){ lastErr = e; }
+    finally{ clearTimeout(timer); }
+  }
+  throw lastErr;
+}
+
+const inflight = new Set();
+let queue = [], active = 0, slot = 0, failed = 0;
+function neededTiles(){
+  const b = map.getBounds().pad(0.15), c = map.getCenter();
+  const cx = lon2tile(c.lng), cy = lat2tile(c.lat), out = [];
+  for (let x=lon2tile(b.getWest()); x<=lon2tile(b.getEast()); x++)
+    for (let y=lat2tile(b.getNorth()); y<=lat2tile(b.getSouth()); y++){
+      const k = x+'/'+y;
+      if (!loadedTiles.has(k) && !inflight.has(k)) out.push([x,y,(x-cx)**2+(y-cy)**2]);
+    }
+  return out.sort((a,b)=>a[2]-b[2]).slice(0, 40);
+}
+let dataReady = false;
+function ensureData(){
+  if (!dataReady) return;
+  if (map.getZoom() < MINZOOM - 0.01){ queue = []; return; }
+  queue = neededTiles();      // re-prioritised on every move
+  pump();
+}
+function pump(){
+  while (active < workers() && queue.length){
+    const [x,y] = queue.shift(), k = x+'/'+y;
+    if (loadedTiles.has(k) || inflight.has(k)) continue;
+    inflight.add(k); active++;
+    loadTile(x, y, k, (slot++) % WORKERS).finally(()=>{ active--; inflight.delete(k); loadStatus(); pump(); });
+  }
+  loadStatus();
+}
+async function loadTile(x, y, k, start){
+  try{
+    if (inStatic(x,y)){
+      const r = await fetch(`data/b/${x}/${y}.json?v=${DATA.v}`);
+      if (r.ok) decodeTile(await r.json());
+      else if (r.status !== 404) throw new Error('HTTP '+r.status);
+      loadedTiles.add(k); failed = 0;
+      const [tcx,tcy] = toXY(tile2lat(y+.5), tile2lon(x+.5));
+      for (const t of terraces.values()) if (Math.abs(t.x-tcx) < 700 && Math.abs(t.y-tcy) < 700) placeTerrace(t);
+      scheduleRender();
+      return;
+    }
+    let els = await cacheGet(k);
+    if (!els){
+      const bb = `${tile2lat(y+1).toFixed(6)},${tile2lon(x).toFixed(6)},${tile2lat(y).toFixed(6)},${tile2lon(x+1).toFixed(6)}`;
+      const q = `[out:json][timeout:25];
+(way["building"](${bb});relation["building"](${bb});way["building:part"](${bb}););
+out geom qt;
+nwr["amenity"~"^(cafe|bar|pub|restaurant|biergarten|ice_cream)$"](${bb});
+out center tags qt;`;
+      els = (await overpass(q, start)).elements;
+      cachePut(k, els);
+    }
+    for (const el of els) ingest(el);
+    loadedTiles.add(k); failed = 0;
+    for (const t of terraces.values()) placeTerrace(t);
+    scheduleRender();
+  }catch(err){
+    console.error(err); failed++;
+    setTimeout(ensureData, Math.min(20000, 3000*failed));
+  }
+}
+let renderQueued = false;
+function scheduleRender(){
+  if (renderQueued) return; renderQueued = true;
+  requestAnimationFrame(()=>{ renderQueued = false; shadowLayer.redraw(); refreshTerraces(true); });
+}
+function loadStatus(){
+  loading = active > 0;
+  if (loading){
+    const left = active + queue.length;
+    setStatus(failed ? 'OpenStreetMap servers are busy — retrying…' : `Loading buildings & terraces… ${left} area${left>1?'s':''} left`);
+  } else setStatus(failed ? 'OpenStreetMap servers are busy — retrying…' : '');
+}
+function ingest(el){
+  const t = el.tags || {};
+  const isB = (t.building && t.building!=='no') || t['building:part'];
+  if (isB && (el.geometry || el.members)){
+    const key = el.type+el.id;
+    if (!seenB.has(key)){
+      seenB.add(key);
+      if (t.location==='underground' || num(t.layer)<0 || t.building==='construction' && !t.height) {}
+      else {
+        const h = heightOf(t), part = !t.building && !!t['building:part'];
+        if (el.type==='way') addBuildingRing(el.geometry, h, part);
+        else if (el.members){
+          const outers = el.members.filter(m=>m.type==='way' && (m.role==='outer'||m.role==='') && m.geometry).map(m=>m.geometry);
+          for (const r of joinRings(outers)) addBuildingRing(r, h, part);
+        }
+      }
+    }
+  }
+  if (t.amenity && TYPES[t.amenity]) addTerrace(el);
+}
+
+// ---------- Time & sun state ----------
+function sunAtMinute(min){
+  const key = `${sel.y}-${sel.m}-${sel.d}`;
+  if (sunCache.key !== key){ sunCache = {key, arr:new Array(1440)}; }
+  let v = sunCache.arr[min];
+  if (!v){ v = sunCache.arr[min] = sunPosition(berlinDate(sel.y,sel.m,sel.d,min), LAT0, LON0); }
+  return v;
+}
+function sunTimes(){
+  let rise=null, set=null, prev = sunAtMinute(0).alt;
+  for (let m=1;m<1440;m++){
+    const a = sunAtMinute(m).alt;
+    if (prev <= -0.0145 && a > -0.0145 && rise==null) rise=m;
+    if (prev > -0.0145 && a <= -0.0145) set=m;
+    prev = a;
+  }
+  return {rise, set};
+}
+const COMPASS = ['N','NE','E','SE','S','SW','W','NW'];
+function updateSunInfo(){
+  const s = currentSun, altDeg = s.alt/RAD;
+  const bearing = (s.az/RAD + 180 + 360) % 360; // from north, clockwise
+  const {rise,set} = sunTimes();
+  const tt = `☀ rises ${rise!=null?hhmm(rise):'—'} · sets ${set!=null?hhmm(set):'—'}`;
+  $('suninfo').innerHTML = altDeg > 0
+    ? `<span><span id="sunArrow" style="transform:rotate(${bearing}deg)">⬆</span> Sun ${altDeg.toFixed(0)}° high, from the ${COMPASS[Math.round(bearing/45)%8]}</span><span>·</span><span>${tt}</span>
+       <span class="legend"><span><i class="sun"></i>sun</span><span><i class="shade"></i>shade</span></span>`
+    : `<span>🌙 Sun below the horizon</span><span>·</span><span>${tt}</span>`;
+}
+function setTime(min, fromUser){
+  sel.min = Math.max(0, Math.min(1435, min));
+  $('time').value = sel.min; $('timeLabel').textContent = hhmm(sel.min);
+  currentSun = sunAtMinute(sel.min);
+  updateSunInfo();
+  shadowLayer.redraw();
+  refreshTerraces(!fromUser);
+}
+function setNow(){
+  const p = berlinParts(new Date());
+  sel.y=p.y; sel.m=p.m; sel.d=p.d;
+  $('date').value = `${p.y}-${String(p.m).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;
+  setTime(Math.round((p.h*60+p.mi)/5)*5);
+}
+$('date').addEventListener('change', e=>{
+  const [y,m,d] = e.target.value.split('-').map(Number); if(!y) return;
+  sel.y=y; sel.m=m; sel.d=d; setTime(sel.min);
+});
+$('time').addEventListener('input', e=>setTime(+e.target.value, true));
+$('time').addEventListener('change', e=>setTime(+e.target.value));
+$('now').addEventListener('click', setNow);
+let playTimer = null;
+$('play').addEventListener('click', ()=>{
+  if (playTimer){ clearInterval(playTimer); playTimer=null; $('play').textContent='▶'; refreshTerraces(true); return; }
+  const {rise,set} = sunTimes();
+  if (set!=null && sel.min >= set) setTime(rise ?? 360, true);
+  $('play').textContent='❚❚';
+  playTimer = setInterval(()=>{
+    const {set} = sunTimes();
+    if (sel.min+5 > (set ?? 1435)){ $('play').click(); return; }
+    setTime(sel.min+5, true);
+  }, 140);
+});
+
+// ---------- Terrace markers, popup & list ----------
+function styleFor(t){
+  const sunny = t.sunny, conf = t.confirmed, z = map.getZoom();
+  const r = (z>=18?8:z>=17?7:6) - (conf?0:1.5);
+  return sunny
+    ? {radius:r, color:'#D98200', weight:2, fillColor:'#FFB800', fillOpacity:conf?1:.7, opacity:conf?1:.7, dashArray:conf?null:'2 2'}
+    : {radius:r-0.5, color:'#4B5672', weight:1.5, fillColor:'#8A97B3', fillOpacity:conf?.95:.6, opacity:conf?1:.6, dashArray:conf?null:'2 2'};
+}
+function dayProfile(t){
+  const out = new Array(288);
+  for (let i=0;i<288;i++) out[i] = inShadow(t.px,t.py,sunAtMinute(i*5)) ? (sunAtMinute(i*5).alt>0.004?1:2) : 0; // 0 sun,1 shade,2 night
+  return out;
+}
+function describe(t, prof){
+  const i0 = Math.floor(sel.min/5), now = prof[i0];
+  let j=i0; while (j<288 && prof[j]===now) j++;
+  if (now===0) return {sunny:true, text: j<288 ? `☀ In the sun until ${hhmm(j*5)}` : '☀ In the sun'};
+  let k=i0; while (k<288 && prof[k]!==0) k++;
+  if (k<288) return {sunny:false, text:`⛅ In the shade · sun from ${hhmm(k*5)}`};
+  return {sunny:false, text: now===2 ? '🌙 No more sun today' : '⛅ In the shade for the rest of the day'};
+}
+function popupHtml(t){
+  const prof = dayProfile(t), d = describe(t, prof);
+  const {rise,set} = sunTimes();
+  const a = Math.max(0, Math.floor((rise ?? 300)/5) - 3), b = Math.min(288, Math.ceil((set ?? 1260)/5) + 3), n = b-a;
+  let rects = '';
+  for (let i=a;i<b;i++){
+    const c = prof[i]===0 ? '#FFB800' : prof[i]===1 ? '#9aa5bd' : '#3b4066';
+    rects += `<rect x="${(i-a)/n*100}%" y="0" width="${100/n+0.2}%" height="14" fill="${c}"/>`;
+  }
+  const cur = (sel.min/5 - a)/n*100;
+  const tg = t.tags, addr = [tg['addr:street'], tg['addr:housenumber']].filter(Boolean).join(' ');
+  const ticks = [a, a+n/4, a+n/2, a+3*n/4, b].map(i=>`<span>${hhmm(Math.min(1435,Math.round(i)*5))}</span>`).join('');
+  return `<div class="pop">
+    <h3>${esc(t.name)}</h3>
+    <div class="t">${esc(t.kind)}${addr?' · '+esc(addr):''}${t.confirmed?'':' · terrace not confirmed in OSM'}</div>
+    <div class="state" style="color:${d.sunny?'#B86E00':'#4B5672'}">${d.text}</div>
+    <svg width="100%" height="18" style="display:block;border-radius:4px;overflow:hidden">${rects}
+      ${cur>=0&&cur<=100?`<rect x="${cur}%" y="0" width="2" height="18" fill="#1f2330"/>`:''}</svg>
+    <div class="ticks">${ticks}</div>
+    <div class="note">Sun/shade from building shadows only — trees, awnings and clouds aren't included.
+      ${tg.website?`<br><a href="${esc(tg.website)}" target="_blank" rel="noopener">Website</a>`:''}
+      · <a href="https://www.openstreetmap.org/${{n:'node',w:'way',r:'relation'}[t.id[0]]}/${t.id.slice(1)}" target="_blank" rel="noopener">OSM</a></div>
+  </div>`;
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+let listTimer = null;
+function refreshTerraces(withList){
+  const showAll = $('showAll').checked, zoomOK = map.getZoom() >= MINZOOM - 0.01;
+  const bounds = map.getBounds().pad(0.1);
+  for (const t of terraces.values()){
+    const want = zoomOK && (t.confirmed || showAll) && bounds.contains([t.lat,t.lon]);
+    if (!want){ if (t.marker){ terraceLayer.removeLayer(t.marker); t.marker=null; } continue; }
+    t.sunny = !inShadow(t.px, t.py, currentSun);
+    if (!t.marker){
+      t.marker = L.circleMarker([t.lat,t.lon], {...styleFor(t), renderer:terraceRenderer});
+      t.marker.bindPopup(()=>popupHtml(t), {maxWidth:300});
+      t.marker.bindTooltip(t.name, {direction:'top', offset:[0,-6]});
+      terraceLayer.addLayer(t.marker);
+    } else t.marker.setStyle(styleFor(t));
+    if (t.marker.isPopupOpen()) t.marker.setPopupContent(popupHtml(t));
+  }
+  clearTimeout(listTimer);
+  listTimer = setTimeout(renderList, withList ? 0 : 250);
+}
+function renderList(){
+  if (map.getZoom() < MINZOOM - 0.01){ $('count').textContent='Zoom in to see terraces'; $('list').innerHTML=''; return; }
+  const b = map.getBounds(), showAll = $('showAll').checked;
+  const vis = [...terraces.values()].filter(t => (t.confirmed||showAll) && b.contains([t.lat,t.lon]));
+  const sunny = vis.filter(t=>t.sunny);
+  $('count').textContent = vis.length ? `${sunny.length} of ${vis.length} in the sun at ${hhmm(sel.min)}` : (loading ? 'Loading…' : 'No terraces mapped here');
+  // time remaining in sun (or until sun), limited work
+  const rows = vis.slice(0, 250).map(t=>{
+    const i0 = Math.floor(sel.min/5); let j=i0, info='';
+    if (t.sunny){ while (j<288 && !inShadow(t.px,t.py,sunAtMinute(j*5))) j++; info = j<288 ? 'until '+hhmm(j*5) : ''; }
+    else if (currentSun.alt>0){ while (j<288 && inShadow(t.px,t.py,sunAtMinute(j*5))) { if (sunAtMinute(j*5).alt<=0.004){ j=288; break; } j++; } info = j<288 ? 'sun at '+hhmm(j*5) : 'no sun'; }
+    return {t, j, info};
+  });
+  rows.sort((a,b)=> (b.t.sunny - a.t.sunny) || (a.t.sunny ? b.j-a.j : a.j-b.j));
+  $('list').innerHTML = rows.map(({t,info},k)=>`<div class="item" data-k="${k}"><span class="d ${t.sunny?'sun':'shade'}"></span><span class="n">${esc(t.name)}</span><span class="s">${info}</span></div>`).join('');
+  $('list').querySelectorAll('.item').forEach(el=>el.addEventListener('click',()=>{
+    const t = rows[+el.dataset.k].t;
+    map.setView([t.lat,t.lon], Math.max(map.getZoom(),18));
+    setTimeout(()=>t.marker && t.marker.openPopup(), 350);
+  }));
+}
+$('showAll').addEventListener('change', ()=>refreshTerraces(true));
+$('togglePanel').addEventListener('click', ()=>{ $('panel').classList.toggle('collapsed'); $('togglePanel').textContent = $('panel').classList.contains('collapsed')?'▴':'▾'; });
+
+// ---------- Status, hash, search, locate ----------
+function setStatus(msg){
+  const el = $('status');
+  if (!msg && map.getZoom() < MINZOOM - 0.01) msg = 'Zoom in to see shadows and terraces';
+  el.textContent = msg; el.style.display = msg ? 'block' : 'none';
+}
+map.on('moveend', ()=>{
+  const c = map.getCenter();
+  history.replaceState(null, '', `#${map.getZoom()}/${c.lat.toFixed(4)}/${c.lng.toFixed(4)}`);
+  loadStatus();
+  refreshTerraces(true);
+  ensureData();
+});
+window.addEventListener('hashchange', ()=>{ const h=parseHash(); if(h) map.setView([h.lat,h.lng],h.z); });
+
+$('search').addEventListener('keydown', async e=>{
+  if (e.key!=='Enter') return;
+  const q = e.target.value.trim(); if(!q) return;
+  try{
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&viewbox=13.08,52.68,13.77,52.33&bounded=1&q=${encodeURIComponent(q)}`);
+    const j = await r.json();
+    if (j[0]) map.setView([+j[0].lat, +j[0].lon], 18); else setStatus('Nothing found in Berlin for “'+q+'”');
+  }catch{ setStatus('Search unavailable right now'); }
+});
+$('locate').addEventListener('click', ()=>{
+  if (!navigator.geolocation) return setStatus('Location not available in this browser');
+  navigator.geolocation.getCurrentPosition(p=>map.setView([p.coords.latitude,p.coords.longitude],18),
+    ()=>setStatus('Couldn’t get your location'), {enableHighAccuracy:true, timeout:8000});
+});
+
+// ---------- Go ----------
+setNow();
+setStatus('Loading…');
+initStatic().then(()=>{ dataReady = true; setStatus(''); refreshTerraces(true); ensureData(); });
+</script>
+</body>
+</html>
