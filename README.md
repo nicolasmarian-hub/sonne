@@ -25,3 +25,16 @@ The GitHub Action in `.github/workflows/build.yml` runs:
   (tick "Re-download all buildings").
 
 Building tiles are cached as an asset on the `buildings-data` release, so normal runs take about a minute.
+
+## Missing or wrong terraces
+
+Only places that OpenStreetMap marks with `outdoor_seating=yes` (plus all Biergärten) appear by default.
+Two ways to fix one:
+
+1. **Best: fix OpenStreetMap itself.** Add "outdoor seating: yes" to the place, on openstreetmap.org
+   or in the StreetComplete phone app. The site picks it up the following Monday, and every other map benefits too.
+2. **Quick: edit [`terraces_overrides.csv`](terraces_overrides.csv)** on GitHub (pencil icon → commit).
+   The site rebuilds in about 2 minutes.
+   - `osm_id,terrace,…` marks an OpenStreetMap place as a terrace (find the id with the "OSM" link in its popup, e.g. `n3778102238`).
+   - `osm_id,hide,…` hides a place.
+   - `,terrace,Name,52.49,13.42,cafe,` adds a place that isn't in OpenStreetMap at all.
