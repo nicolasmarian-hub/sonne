@@ -1,0 +1,37 @@
+name: discover-data-sources
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/discover.yml']
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe Berlin WFS services
+        run: |
+          for svc in gebaeude_geschosse alkis_gebaeude alkis; do
+            echo "=================== $svc GetCapabilities"
+            curl -sS -m 60 "https://gdi.berlin.de/services/wfs/$svc?SERVICE=WFS&REQUEST=GetCapabilities" -o cap_$svc.xml || true
+            ls -la cap_$svc.xml || true
+            grep -o '<wfs:Name>[^<]*</wfs:Name>\|<Name>[^<]*</Name>' cap_$svc.xml | head -30 || true
+            grep -o 'outputFormat[^>]*>' cap_$svc.xml | head -3 || true
+            grep -io '<ows:Value>[^<]*json[^<]*</ows:Value>' cap_$svc.xml | head -5 || true
+            grep -io 'ImplementsResultPaging.\{0,80\}' cap_$svc.xml | head -2 || true
+            grep -io 'CountDefault.\{0,80\}' cap_$svc.xml | head -2 || true
+          done
+      - name: Describe + sample features
+        run: |
+          for svc in gebaeude_geschosse alkis_gebaeude; do
+            for t in $(grep -o '<wfs:Name>[^<]*</wfs:Name>\|<Name>[^<]*</Name>' cap_$svc.xml 2>/dev/null | sed 's/<[^>]*>//g' | grep -v '^WFS$' | head -4); do
+              echo "=================== $svc :: $t"
+              curl -sS -m 60 "https://gdi.berlin.de/services/wfs/$svc?SERVICE=WFS&VERSION=2.0.0&REQUEST=DescribeFeatureType&TYPENAMES=$t" | head -c 3000; echo
+              echo "--- sample (json)"
+              curl -sS -m 60 "https://gdi.berlin.de/services/wfs/$svc?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=$t&COUNT=2&OUTPUTFORMAT=application/json&SRSNAME=EPSG:4326" | head -c 2500; echo
+              echo "--- hits"
+              curl -sS -m 120 "https://gdi.berlin.de/services/wfs/$svc?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=$t&RESULTTYPE=hits" | head -c 600; echo
+            done
+          done
+      - name: Other sources reachable?
+        run: |
+          curl -sS -m 30 -o /dev/null -w "geofabrik %{http_code}\n" https://download.geofabrik.de/europe/germany/berlin-latest.osm.pbf -r 0-100 || true
+          curl -sS -m 30 -o /dev/null -w "overpass %{http_code}\n" https://overpass-api.de/api/status || true
